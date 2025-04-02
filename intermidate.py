@@ -1,11 +1,34 @@
+
 import streamlit as st
 import requests
 import json
 import time
 import os
+import uuid
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, func
+from sqlalchemy.orm import sessionmaker, declarative_base
 
-model = "llama3"  
+# Database Configuration
+DATABASE_URL = "postgresql://postgres:PAvEcizawOGNeYDbwLSWBzFtWKRSAiSq@postgres.railway.internal:5432/railway"
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
 
+# Database Model
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String(255), index=True)
+    role = Column(String, index=True)
+    content = Column(Text)
+    timestamp = Column(DateTime, default=func.now())
+
+Base.metadata.create_all(bind=engine)
+
+# Model name
+model = "llama3"
+
+# Response generator (mimics streaming)
 def response_generator(msg_content):
     lines = msg_content.split('\n')
     for line in lines:
@@ -15,12 +38,13 @@ def response_generator(msg_content):
             time.sleep(0.1)
         yield "\n"
 
+# Show chat messages
 def show_msgs():
     for msg in st.session_state.messages:
-        role = msg["role"]
-        with st.chat_message(role):
+        with st.chat_message(msg["role"]):
             st.write(msg["content"])
 
+# Chat function with LLaMA3
 def chat(messages):
     try:
         response = requests.post(
@@ -39,102 +63,70 @@ def chat(messages):
     except Exception as e:
         return {"role": "assistant", "content": str(e)}
 
-def format_messages_for_summary(messages):
-    # Create a single string from all the chat messages
-    return '\n'.join(f"{msg['role']}: {msg['content']}" for msg in messages)
+# Save message to DB
+def save_message(session_id, role, content):
+    db = SessionLocal()
+    new_message = ChatMessage(session_id=session_id, role=role, content=content)
+    db.add(new_message)
+    db.commit()
+    db.close()
 
-
-def summary(messages):
-    sysmessage = "summarize this conversation in 3 words. No symbols or punctuation:\n\n\n"
-    combined = sysmessage + messages
-    api_message = [{"role": "user", "content": combined}]
-    try:
-        response = requests.post(
-            "http://localhost:11434/api/chat",
-            json={"model": model, "messages": api_message, "stream": True},
-        )
-        response.raise_for_status()
-        output = ""
-        for line in response.iter_lines():
-            body = json.loads(line)
-            if "error" in body:
-                raise Exception(body["error"])
-            if body.get("done", False):
-                return output
-            # This will append only the content from each message, if available.
-            output += body.get("message", {}).get("content", "")
-    except Exception as e:
-        return str(e)
-
-def save_chat():
-    if not os.path.exists('./Intermediate-Chats'):
-        os.makedirs('./Intermediate-Chats')
-    if st.session_state['messages']:
-        formatted_messages = format_messages_for_summary(st.session_state['messages'])
-        chat_summary = summary(formatted_messages)
-        filename = f'./Intermediate-Chats/{chat_summary}.txt'
-        with open(filename, 'w') as f:
-            for message in st.session_state['messages']:
-                # Replace actual newline characters with a placeholder
-                encoded_content = message['content'].replace('\n', '\\n')
-                f.write(f"{message['role']}: {encoded_content}\n")
-        st.session_state['messages'].clear()
-    else:
-        st.warning("No chat messages to save.")
-
+# Load previous chat sessions
 def load_saved_chats():
-    chat_dir = './Intermediate-Chats'
-    if os.path.exists(chat_dir):
-        # Get all files in the directory
-        files = os.listdir(chat_dir)
-        # Sort files by modification time, most recent first
-        files.sort(key=lambda x: os.path.getmtime(os.path.join(chat_dir, x)), reverse=True)
-        for file_name in files:
-            display_name = file_name[:-4] if file_name.endswith('.txt') else file_name  # Remove '.txt' from display
-            if st.sidebar.button(display_name):
-                st.session_state['show_chats'] = False  # Make sure this is a Boolean False, not string 'False'
-                st.session_state['is_loaded'] = True
-                load_chat(f"./Intermediate-Chats/{file_name}")
-                # show_msgs()
+    db = SessionLocal()
+    sessions = db.query(ChatMessage.session_id).distinct().all()
+    db.close()
+    
+    for session in sessions:
+        session_id = session[0]
+        if st.sidebar.button(f"Session: {session_id[:8]}..."):
+            load_chat_from_db(session_id)
 
+# Load chat messages from DB
+def load_chat_from_db(session_id):
+    st.session_state["messages"] = []
+    db = SessionLocal()
+    messages = db.query(ChatMessage).filter(ChatMessage.session_id == session_id).order_by(ChatMessage.timestamp).all()
+    db.close()
+
+    for message in messages:
+        st.session_state.messages.append({"role": message.role, "content": message.content})
+
+# Format chat log for download
 def format_chatlog(chatlog):
-    # Formats the chat log for downloading
     return "\n".join(f"{msg['role']}: {msg['content']}" for msg in chatlog)
 
-def load_chat(file_path):
-    # Clear the existing messages in the session state
-    st.session_state['messages'].clear()  # Using clear() to explicitly empty the list
-    show_msgs()
-    # Read and process the file to extract messages and populate the session state
-    with open(file_path, 'r') as file:
-        for line in file.readlines():
-            role, content = line.strip().split(': ', 1)
-            # Decode the placeholder back to actual newline characters
-            decoded_content = content.replace('\\n', '\n')
-            st.session_state['messages'].append({'role': role, 'content': decoded_content})
-
+# Streamlit UI
 def main():
-    st.title("LLaMA Chat Interface")
-    user_input = st.chat_input("Enter your prompt:", key="1")
-    if 'show' not in st.session_state:
-        st.session_state['show'] = 'True'
-    if 'show_chats' not in st.session_state:
-        st.session_state['show_chats'] = 'False'
+    st.title("LLaMA Chat with Database")
+    
+    # Initialize session state variables
+    if 'session_id' not in st.session_state:
+        st.session_state['session_id'] = str(uuid.uuid4())
     if 'messages' not in st.session_state:
         st.session_state['messages'] = []
+    
+    # Show messages
     show_msgs()
+
+    # User input
+    user_input = st.chat_input("Enter your prompt:")
     if user_input:
-        with st.chat_message("user",):
-                st.write(user_input)
+        session_id = st.session_state["session_id"]
+        
+        with st.chat_message("user"):
+            st.write(user_input)
         st.session_state.messages.append({"role": "user", "content": user_input})
-        combined = "\\n".join(msg["content"] for msg in st.session_state.messages if msg["role"] == "user")
-        messages = [{"role": "user", "content": combined}]
-        response = chat(messages)
+        save_message(session_id, "user", user_input)
+        
+        response = chat([{"role": "user", "content": user_input}])
         st.session_state.messages.append(response)
+        save_message(session_id, "assistant", response["content"])
+        
         with st.chat_message("assistant"):
             st.write_stream(response_generator(response["content"]))    
-    elif st.session_state['messages'] is None:
-        st.info("Enter a prompt or load chat above to start the conversation")
+
+    # Chat log download
     chatlog = format_chatlog(st.session_state['messages'])
     st.sidebar.download_button(
         label="Download Chat Log",
@@ -142,20 +134,11 @@ def main():
         file_name="chat_log.txt",
         mime="text/plain"
     )
-    for i in range(5):
-        st.sidebar.write("")
-    if st.sidebar.button("Save Chat"):
-        save_chat()
 
-    
-    # Show/Hide chats toggle
-    if st.sidebar.checkbox("Show/hide chat history", value=st.session_state['show_chats']):
+    # Load previous chats
+    if st.sidebar.checkbox("Show/hide chat history"):
         st.sidebar.title("Previous Chats")
         load_saved_chats()
-        
-    for i in range(3):
-        st.sidebar.write(" ")
-
 
 if __name__ == "__main__":
     main()
