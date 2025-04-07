@@ -53,7 +53,7 @@ def load_chat_from_db(session_id):
 def preload_model():
     try:
         r = requests.post(
-            f"{OLLAMA_URL}/api/generate",
+            f"{OLLAMA_URL}/api/chat",
             json={"model": MODEL_NAME, "prompt": "Hello"},
             timeout=10
         )
@@ -64,7 +64,7 @@ def preload_model():
 def generate_response(messages):
     try:
         response = requests.post(
-            f"{OLLAMA_URL}/api/generate",
+            f"{OLLAMA_URL}/api/chat",
             json={"model": MODEL_NAME, "messages": messages, "stream": True},
             stream=True
         )
