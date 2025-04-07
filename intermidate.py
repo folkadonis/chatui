@@ -61,25 +61,37 @@ def preload_model():
     except Exception as e:
         st.sidebar.error(f"Model load failed: {e}")
 
+# def generate_response(messages):
+#     try:
+#         response = requests.post(
+#             f"{OLLAMA_URL}/api/generate",
+#             json={"model": MODEL_NAME, "messages": messages, "stream": True},
+#             stream=True
+#         )
+#         output = ""
+#         for line in response.iter_lines():
+#             if line:
+#                 body = json.loads(line)
+#                 if "error" in body:
+#                     raise Exception(body["error"])
+#                 delta = body.get("message", {}).get("content", "")
+#                 output += delta
+#                 yield delta
+#     except Exception as e:
+#         yield str(e)
 def generate_response(messages):
+    prompt = messages[-1]["content"]  # only use the latest user message
     try:
         response = requests.post(
             f"{OLLAMA_URL}/api/generate",
-            json={"model": MODEL_NAME, "messages": messages, "stream": True},
-            stream=True
+            json={"model": MODEL_NAME, "prompt": prompt},
+            timeout=60
         )
-        output = ""
-        for line in response.iter_lines():
-            if line:
-                body = json.loads(line)
-                if "error" in body:
-                    raise Exception(body["error"])
-                delta = body.get("message", {}).get("content", "")
-                output += delta
-                yield delta
+        response.raise_for_status()
+        result = response.json()
+        yield result.get("response", "")
     except Exception as e:
-        yield str(e)
-
+        yield f"❌ Error: {e}"
 def format_chatlog(chatlog):
     return "\n".join(f"{msg['role']}: {msg['content']}" for msg in chatlog)
 
