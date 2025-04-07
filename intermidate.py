@@ -64,7 +64,7 @@ def preload_model():
 def generate_response(messages):
     try:
         response = requests.post(
-            f"{OLLAMA_URL}/api/chat",
+            f"{OLLAMA_URL}/api/generate",
             json={"model": MODEL_NAME, "messages": messages, "stream": True},
             stream=True
         )
