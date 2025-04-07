@@ -27,14 +27,12 @@ class ChatMessage(Base):
 
 Base.metadata.create_all(bind=engine)
 
-# Save a chat message
 def save_message(session_id, role, content):
     db = SessionLocal()
     db.add(ChatMessage(session_id=session_id, role=role, content=content))
     db.commit()
     db.close()
 
-# Load previous sessions
 def load_saved_chats():
     db = SessionLocal()
     sessions = db.query(ChatMessage.session_id).distinct().all()
@@ -44,7 +42,6 @@ def load_saved_chats():
         if st.sidebar.button(f"Session: {session_id[:8]}..."):
             load_chat_from_db(session_id)
 
-# Load messages from a session
 def load_chat_from_db(session_id):
     st.session_state["messages"] = []
     db = SessionLocal()
@@ -52,8 +49,18 @@ def load_chat_from_db(session_id):
     db.close()
     for message in messages:
         st.session_state.messages.append({"role": message.role, "content": message.content})
-        
-# Stream full response from Ollama
+
+def preload_model():
+    try:
+        r = requests.post(
+            f"{OLLAMA_URL}/api/generate",
+            json={"model": MODEL_NAME, "prompt": "Hello"},
+            timeout=10
+        )
+        r.raise_for_status()
+    except Exception as e:
+        st.sidebar.error(f"Model load failed: {e}")
+
 def generate_response(messages):
     try:
         response = requests.post(
@@ -73,30 +80,27 @@ def generate_response(messages):
     except Exception as e:
         yield str(e)
 
-# Format for downloading
 def format_chatlog(chatlog):
     return "\n".join(f"{msg['role']}: {msg['content']}" for msg in chatlog)
 
-# Display past messages
 def show_msgs():
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
 
-# Main UI
 def main():
+    st.set_page_config(page_title="LLaMA 3 Chat (Railway)", page_icon="🦙")
     st.title("🦙 LLaMA 3 Chat with DB (Railway)")
 
-    # Session init
+    preload_model()
+
     if 'session_id' not in st.session_state:
         st.session_state['session_id'] = str(uuid.uuid4())
     if 'messages' not in st.session_state:
         st.session_state['messages'] = []
 
-    # Show history
     show_msgs()
 
-    # Input
     user_input = st.chat_input("Type your message:")
     if user_input:
         session_id = st.session_state["session_id"]
@@ -108,13 +112,13 @@ def main():
         
         with st.chat_message("assistant"):
             full_response = ""
+            response_placeholder = st.empty()
             for chunk in generate_response(st.session_state.messages):
                 full_response += chunk
-                st.write(chunk, end="")
+                response_placeholder.markdown(full_response)
             st.session_state.messages.append({"role": "assistant", "content": full_response})
             save_message(session_id, "assistant", full_response)
 
-    # Sidebar
     chatlog = format_chatlog(st.session_state['messages'])
     st.sidebar.download_button("📥 Download Chat Log", chatlog, "chat_log.txt", "text/plain")
 
