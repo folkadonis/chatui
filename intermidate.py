@@ -159,7 +159,7 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 
 # Configurations
 DATABASE_URL = "postgresql://postgres:PAvEcizawOGNeYDbwLSWBzFtWKRSAiSq@postgres.railway.internal:5432/railway"
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
+OLLAMA_URL = os.getenv("OLLAMA_URL", "https://ollama-production-4b67.up.railway.app")
 MODEL_NAME = "llama3"
 
 # Database setup
