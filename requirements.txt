@@ -2,3 +2,4 @@ streamlit
 ollama
 requests
 sqlalchemy
+psycopg2
