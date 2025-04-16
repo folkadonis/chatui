@@ -3,3 +3,6 @@ ollama
 requests
 sqlalchemy
 psycopg2
+flask
+transformers
+torch
